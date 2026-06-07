@@ -1,4 +1,4 @@
-CREATE DATABASE clinica_petshop;
+CREATE DATABASE if not EXISTS clinica_petshop1;
 USE clinica_petshop1;
 
 -- TUTOR
