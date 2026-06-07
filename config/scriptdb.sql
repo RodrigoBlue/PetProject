@@ -1,4 +1,4 @@
-CREATE DATABASE if not EXISTS clinica_petshop1;
+CREATE DATABASE clinica_petshop;
 USE clinica_petshop1;
 
 -- TUTOR
@@ -112,8 +112,25 @@ ADD COLUMN status TINYINT DEFAULT 1 COMMENT '1=Ativo, 0=Inativo';
 -- Atualizar o usuário existente
 UPDATE usuario SET nome = 'Funcionário Teste' WHERE email = 'funcionario@petproject.com';
 
+
 -- Inserir um usuário de teste (senha: 123456)
 INSERT INTO usuario (email, senha) VALUES ('funcionario@petproject.com', '123456');
+
+ALTER TABLE pet
+
+ADD COLUMN castrado BOOLEAN;
+
+
+ALTER TABLE pet ADD COLUMN castrado BOOLEAN;
+
+ALTER TABLE pet ADD COLUMN microchip VARCHAR(50) DEFAULT NULL;
+
+ALTER TABLE pet MODIFY COLUMN castrado boolean;
+
+
+DESCRIBE pet;
+
+
 
 -- Inserir alguns dados de exemplo para teste
 INSERT INTO tutor (nome, cpf, telefone, endereco) VALUES 
@@ -140,3 +157,13 @@ INSERT INTO agendamento (data, hora, idPet) VALUES
 INSERT INTO atendimento (data, hora, idPet, idFuncionario, idServico) VALUES 
 (CURDATE(), '09:00:00', 1, 1, 1),
 (CURDATE(), '10:30:00', 2, 1, 2);
+
+CREATE TABLE pet_historico_peso (
+    idHistorico INT AUTO_INCREMENT PRIMARY KEY,
+    idPet INT NOT NULL,
+    data DATE NOT NULL,
+    peso DECIMAL(5,3) NOT NULL,
+    FOREIGN KEY (idPet) REFERENCES pet(idPet)
+);
+
+select * from pet;

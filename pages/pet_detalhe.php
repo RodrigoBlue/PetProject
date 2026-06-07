@@ -1,4 +1,7 @@
 <?php
+error_reporting(E_ALL & ~E_WARNING & ~E_NOTICE);
+ini_set('display_errors', 0);
+
 require_once '../config/database.php';
 require_once '../includes/auth.php';
 requireFuncionario();
@@ -8,9 +11,9 @@ $message = '';
 $error = '';
 
 // Verificar se é edição ou novo
-$pet_id = $_GET['id'] ?? 0;
-$tutor_id = $_GET['tutor_id'] ?? 0;
-$is_new = ($_GET['action'] ?? '') === 'new' || $pet_id == 0;
+$pet_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+$tutor_id = isset($_GET['tutor_id']) ? (int)$_GET['tutor_id'] : 0;
+$is_new = (isset($_GET['action']) && $_GET['action'] === 'new') || $pet_id == 0;
 
 // Buscar dados do pet se for edição
 $pet = null;
@@ -21,7 +24,18 @@ if (!$is_new && $pet_id > 0) {
                             WHERE p.idPet = $pet_id");
     $pet = $result->fetch_assoc();
     if ($pet) {
+        // Garantir valores padrão para campos que podem não existir
+        $pet['microchip'] = isset($pet['microchip']) ? $pet['microchip'] : '';
+        $pet['observacoes'] = isset($pet['observacoes']) ? $pet['observacoes'] : '';
+        $pet['diagnostico'] = isset($pet['diagnostico']) ? $pet['diagnostico'] : '';
+        $pet['notas_gerais'] = isset($pet['notas_gerais']) ? $pet['notas_gerais'] : '';
+        $pet['alertas'] = isset($pet['alertas']) ? $pet['alertas'] : '';
+        $pet['castrado'] = isset($pet['castrado']) ? $pet['castrado'] : 0;
+        $pet['data_nascimento'] = isset($pet['data_nascimento']) ? $pet['data_nascimento'] : '';
         $tutor_id = $pet['idTutor'];
+    } else {
+        header('Location: pets.php?error=' . urlencode('Pet não encontrado'));
+        exit();
     }
 }
 
@@ -32,100 +46,142 @@ if ($tutor_id > 0) {
     $tutor = $result->fetch_assoc();
 }
 
-// Processar formulário
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $nome = trim($_POST['nome']);
-    $especie = $_POST['especie'];
-    $raca = trim($_POST['raca']);
-    $peso = $_POST['peso'];
-    $sexo = $_POST['sexo'];
-    $cor = trim($_POST['cor']);
-    $castrado = $_POST['castrado'] ?? 'Não';
-    $microchip = trim($_POST['microchip']);
-    $data_nascimento = $_POST['data_nascimento'] ?? null;
-    $tutor_id = $_POST['tutor_id'];
-    
-    if ($is_new) {
-        $stmt = $conn->prepare("INSERT INTO pet (nome, especie, raca, peso, sexo, cor, castrado, microchip, data_nascimento, idTutor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("sssdsssssi", $nome, $especie, $raca, $peso, $sexo, $cor, $castrado, $microchip, $data_nascimento, $tutor_id);
+// Processar formulário de edição
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    if ($_POST['action'] === 'update_pet') {
+        $nome = isset($_POST['nome']) ? trim($_POST['nome']) : '';
+        $especie = isset($_POST['especie']) ? $_POST['especie'] : 'Canina';
+        $raca = isset($_POST['raca']) ? trim($_POST['raca']) : '';
+        $peso = isset($_POST['peso']) ? $_POST['peso'] : 0;
+        $sexo = isset($_POST['sexo']) ? $_POST['sexo'] : 'Macho';
+        $cor = isset($_POST['cor']) ? trim($_POST['cor']) : '';
+        $castrado = (isset($_POST['castrado']) && $_POST['castrado'] === 'Sim') ? 1 : 0;
+        $microchip = isset($_POST['microchip']) ? trim($_POST['microchip']) : '';
+        $data_nascimento = isset($_POST['data_nascimento']) ? $_POST['data_nascimento'] : null;
+        $observacoes = isset($_POST['observacoes']) ? trim($_POST['observacoes']) : '';
+        $diagnostico = isset($_POST['diagnostico']) ? trim($_POST['diagnostico']) : '';
+        $notas_gerais = isset($_POST['notas_gerais']) ? trim($_POST['notas_gerais']) : '';
+        $alertas = isset($_POST['alertas']) ? trim($_POST['alertas']) : '';
+        
+        $stmt = $conn->prepare("UPDATE pet SET nome=?, especie=?, raca=?, peso=?, sexo=?, cor=?, castrado=?, microchip=?, data_nascimento=?, observacoes=?, diagnostico=?, notas_gerais=?, alertas=? WHERE idPet=?");
+        $stmt->bind_param("sssdsssssssssi", $nome, $especie, $raca, $peso, $sexo, $cor, $castrado, $microchip, $data_nascimento, $observacoes, $diagnostico, $notas_gerais, $alertas, $pet_id);
+        
         if ($stmt->execute()) {
-            $pet_id = $conn->insert_id;
-            $message = "Pet cadastrado com sucesso!";
-            header("Location: pet_detalhe.php?id=$pet_id");
-            exit();
-        } else {
-            $error = "Erro ao cadastrar: " . $conn->error;
-        }
-    } else {
-        $stmt = $conn->prepare("UPDATE pet SET nome=?, especie=?, raca=?, peso=?, sexo=?, cor=?, castrado=?, microchip=?, data_nascimento=? WHERE idPet=?");
-        $stmt->bind_param("sssdsssssi", $nome, $especie, $raca, $peso, $sexo, $cor, $castrado, $microchip, $data_nascimento, $pet_id);
-        if ($stmt->execute()) {
-            $message = "Pet atualizado com sucesso!";
-            header("Location: pet_detalhe.php?id=$pet_id");
-            exit();
+            $message = "Informações do pet atualizadas com sucesso!";
+            // Recarregar dados do pet
+            $result = $conn->query("SELECT p.*, t.nome as tutor_nome, t.cpf, t.telefone, t.endereco FROM pet p JOIN tutor t ON p.idTutor = t.idTutor WHERE p.idPet = $pet_id");
+            $pet = $result->fetch_assoc();
+            if ($pet) {
+                $pet['microchip'] = isset($pet['microchip']) ? $pet['microchip'] : '';
+                $pet['observacoes'] = isset($pet['observacoes']) ? $pet['observacoes'] : '';
+                $pet['diagnostico'] = isset($pet['diagnostico']) ? $pet['diagnostico'] : '';
+                $pet['notas_gerais'] = isset($pet['notas_gerais']) ? $pet['notas_gerais'] : '';
+                $pet['alertas'] = isset($pet['alertas']) ? $pet['alertas'] : '';
+            }
         } else {
             $error = "Erro ao atualizar: " . $conn->error;
         }
+        $stmt->close();
+    }
+    
+    // Adicionar registro clínico
+    if ($_POST['action'] === 'add_registro') {
+        $data_registro = isset($_POST['data_registro']) ? $_POST['data_registro'] : date('Y-m-d');
+        $tipo_registro = isset($_POST['tipo_registro']) ? $_POST['tipo_registro'] : 'Consulta';
+        $descricao = isset($_POST['descricao']) ? trim($_POST['descricao']) : '';
+        $medicamentos = isset($_POST['medicamentos']) ? trim($_POST['medicamentos']) : '';
+        $procedimentos = isset($_POST['procedimentos']) ? trim($_POST['procedimentos']) : '';
+        
+        // Criar tabela se não existir
+        $conn->query("CREATE TABLE IF NOT EXISTS pet_registros_clinicos (
+            idRegistro INT AUTO_INCREMENT PRIMARY KEY,
+            idPet INT NOT NULL,
+            data_registro DATE NOT NULL,
+            tipo_registro VARCHAR(50) NOT NULL,
+            descricao TEXT,
+            medicamentos TEXT,
+            procedimentos TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (idPet) REFERENCES pet(idPet) ON DELETE CASCADE
+        )");
+        
+        $stmt = $conn->prepare("INSERT INTO pet_registros_clinicos (idPet, data_registro, tipo_registro, descricao, medicamentos, procedimentos) VALUES (?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("isssss", $pet_id, $data_registro, $tipo_registro, $descricao, $medicamentos, $procedimentos);
+        
+        if ($stmt->execute()) {
+            $message = "Registro clínico adicionado com sucesso!";
+        } else {
+            $error = "Erro ao adicionar registro: " . $conn->error;
+        }
+        $stmt->close();
+    }
+    
+    // Adicionar atividade agendada
+    if ($_POST['action'] === 'add_atividade') {
+        $data_atividade = isset($_POST['data_atividade']) ? $_POST['data_atividade'] : date('Y-m-d');
+        $hora_atividade = isset($_POST['hora_atividade']) ? $_POST['hora_atividade'] : '09:00:00';
+        $tipo_atividade = isset($_POST['tipo_atividade']) ? $_POST['tipo_atividade'] : 'Consulta';
+        $descricao_atividade = isset($_POST['descricao_atividade']) ? trim($_POST['descricao_atividade']) : '';
+        $status_atividade = isset($_POST['status_atividade']) ? $_POST['status_atividade'] : 'Pendente';
+        
+        // Criar tabela se não existir
+        $conn->query("CREATE TABLE IF NOT EXISTS pet_atividades (
+            idAtividade INT AUTO_INCREMENT PRIMARY KEY,
+            idPet INT NOT NULL,
+            data_atividade DATE NOT NULL,
+            hora_atividade TIME NOT NULL,
+            tipo_atividade VARCHAR(50) NOT NULL,
+            descricao TEXT,
+            status VARCHAR(20) DEFAULT 'Pendente',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (idPet) REFERENCES pet(idPet) ON DELETE CASCADE
+        )");
+        
+        $stmt = $conn->prepare("INSERT INTO pet_atividades (idPet, data_atividade, hora_atividade, tipo_atividade, descricao, status) VALUES (?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("isssss", $pet_id, $data_atividade, $hora_atividade, $tipo_atividade, $descricao_atividade, $status_atividade);
+        
+        if ($stmt->execute()) {
+            $message = "Atividade agendada com sucesso!";
+        } else {
+            $error = "Erro ao agendar atividade: " . $conn->error;
+        }
+        $stmt->close();
     }
 }
 
-// Buscar registros clínicos (atendimentos)
+// Buscar registros clínicos
 $registros_clinicos = [];
 if ($pet_id > 0) {
-    $registros = $conn->query("SELECT a.*, s.tipo as servico, f.nome as funcionario 
-                               FROM atendimento a 
-                               JOIN servico s ON a.idServico = s.idServico 
-                               JOIN funcionario f ON a.idFuncionario = f.idFuncionario 
-                               WHERE a.idPet = $pet_id 
-                               ORDER BY a.data DESC, a.hora DESC");
-    $registros_clinicos = $registros->fetch_all(MYSQLI_ASSOC);
-}
-
-// Buscar agendamentos
-$agendamentos = [];
-if ($pet_id > 0) {
-    $agend = $conn->query("SELECT * FROM agendamento WHERE idPet = $pet_id ORDER BY data DESC, hora DESC");
-    $agendamentos = $agend->fetch_all(MYSQLI_ASSOC);
-}
-
-// Buscar vacinas (vamos criar uma tabela se não existir)
-$vacinas = [];
-if ($pet_id > 0) {
-    // Verificar se tabela vacinas existe
-    $check = $conn->query("SHOW TABLES LIKE 'vacina'");
+    $check = $conn->query("SHOW TABLES LIKE 'pet_registros_clinicos'");
     if ($check->num_rows > 0) {
-        $vac = $conn->query("SELECT * FROM vacina WHERE idPet = $pet_id ORDER BY data_aplicacao DESC");
-        $vacinas = $vac->fetch_all(MYSQLI_ASSOC);
+        $registros = $conn->query("SELECT * FROM pet_registros_clinicos WHERE idPet = $pet_id ORDER BY data_registro DESC");
+        if ($registros) {
+            $registros_clinicos = $registros->fetch_all(MYSQLI_ASSOC);
+        }
     }
 }
 
-// Buscar exames
-$exames = [];
+// Buscar atividades agendadas
+$atividades = [];
 if ($pet_id > 0) {
-    $check = $conn->query("SHOW TABLES LIKE 'exame'");
+    $check = $conn->query("SHOW TABLES LIKE 'pet_atividades'");
     if ($check->num_rows > 0) {
-        $ex = $conn->query("SELECT * FROM exame WHERE idPet = $pet_id ORDER BY data_solicitacao DESC");
-        $exames = $ex->fetch_all(MYSQLI_ASSOC);
+        $ativ = $conn->query("SELECT * FROM pet_atividades WHERE idPet = $pet_id ORDER BY data_atividade DESC, hora_atividade DESC");
+        if ($ativ) {
+            $atividades = $ativ->fetch_all(MYSQLI_ASSOC);
+        }
     }
-}
-
-// Buscar produtos/medicamentos indicados
-$receitas = [];
-if ($pet_id > 0) {
-    $rec = $conn->query("SELECT pp.*, pr.nome as produto_nome, pr.valor 
-                         FROM pet_produto pp 
-                         JOIN produto pr ON pp.idProduto = pr.idProduto 
-                         WHERE pp.idPet = $pet_id 
-                         ORDER BY pp.data_indicacao DESC");
-    $receitas = $rec->fetch_all(MYSQLI_ASSOC);
 }
 
 // Buscar histórico de peso
 $historico_peso = [];
 if ($pet_id > 0) {
-    $hist = $conn->query("SELECT data, peso FROM pet_historico_peso WHERE idPet = $pet_id ORDER BY data DESC");
-    if ($hist && $hist->num_rows > 0) {
-        $historico_peso = $hist->fetch_all(MYSQLI_ASSOC);
+    $check = $conn->query("SHOW TABLES LIKE 'pet_historico_peso'");
+    if ($check->num_rows > 0) {
+        $hist = $conn->query("SELECT * FROM pet_historico_peso WHERE idPet = $pet_id ORDER BY data DESC");
+        if ($hist) {
+            $historico_peso = $hist->fetch_all(MYSQLI_ASSOC);
+        }
     }
 }
 ?>
@@ -143,7 +199,6 @@ if ($pet_id > 0) {
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Poppins', sans-serif; background: #f5f5f5; }
         
-        /* Sidebar */
         .sidebar {
             width: 250px;
             background: #292F36;
@@ -165,7 +220,6 @@ if ($pet_id > 0) {
         .sidebar-menu a:hover, .sidebar-menu a.active { background: #4ECDC4; padding-left: 30px; }
         .sidebar-menu i { margin-right: 10px; width: 20px; }
         
-        /* Top Bar */
         .top-bar {
             background: white;
             padding: 15px 30px;
@@ -181,44 +235,40 @@ if ($pet_id > 0) {
         }
         .btn-logout { background: #fc0000; color: white; padding: 8px 15px; border-radius: 5px; text-decoration: none; }
         
-        /* Main Content */
         .main-content {
             margin-left: 250px;
             margin-top: 70px;
             padding: 30px;
         }
         
-        /* Header do Pet */
         .pet-header {
             background: white;
-            border-radius: 10px;
+            border-radius: 15px;
             padding: 20px;
             margin-bottom: 20px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
         .pet-info h1 { font-size: 2rem; color: #292F36; }
         .pet-info .id { color: #666; font-size: 0.9rem; }
-        .pet-actions .btn { padding: 10px 20px; border-radius: 5px; text-decoration: none; margin-left: 10px; }
+        .pet-actions .btn { padding: 10px 20px; border-radius: 8px; text-decoration: none; margin-left: 10px; }
         .btn-primary { background: #4ECDC4; color: white; border: none; cursor: pointer; }
         .btn-secondary { background: #6c757d; color: white; }
-        .btn-warning { background: #ffc107; color: black; }
-        .btn-danger { background: #dc3545; color: white; }
+        .btn-sm { padding: 5px 10px; font-size: 0.8rem; margin: 0 2px; border-radius: 6px; }
         
-        /* Cards de informações */
         .info-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
             gap: 20px;
             margin-bottom: 20px;
         }
         .info-card {
             background: white;
-            border-radius: 10px;
+            border-radius: 15px;
             padding: 20px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
         .info-card h3 {
             color: #4ECDC4;
@@ -237,20 +287,20 @@ if ($pet_id > 0) {
         }
         .info-value { flex: 1; color: #292F36; }
         
-        /* Tabs */
         .tabs {
             display: flex;
             background: white;
-            border-radius: 10px 10px 0 0;
+            border-radius: 15px 15px 0 0;
             overflow-x: auto;
             border-bottom: 2px solid #e0e0e0;
+            flex-wrap: wrap;
         }
         .tab-btn {
             padding: 15px 25px;
             background: none;
             border: none;
             cursor: pointer;
-            font-size: 1rem;
+            font-size: 0.9rem;
             font-weight: 500;
             color: #666;
             transition: 0.3s;
@@ -262,14 +312,43 @@ if ($pet_id > 0) {
         }
         .tab-content {
             background: white;
-            border-radius: 0 0 10px 10px;
-            padding: 20px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            border-radius: 0 0 15px 15px;
+            padding: 25px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             display: none;
         }
         .tab-content.active { display: block; }
         
-        /* Tabelas */
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #292F36;
+        }
+        .form-group input, 
+        .form-group select, 
+        .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+        .form-group input:focus, 
+        .form-group select:focus, 
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #4ECDC4;
+        }
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
         .data-table {
             width: 100%;
             border-collapse: collapse;
@@ -280,15 +359,14 @@ if ($pet_id > 0) {
             border-bottom: 1px solid #e0e0e0;
         }
         .data-table th { background: #f8f9fa; font-weight: 600; }
+        .data-table tr:hover { background: #f8f9fa; }
         
-        .btn-sm { padding: 5px 10px; font-size: 0.8rem; margin: 0 2px; }
         .empty-message { text-align: center; padding: 40px; color: #666; }
         
-        .alert { padding: 12px; border-radius: 5px; margin-bottom: 20px; }
-        .alert-success { background: #d4edda; color: #155724; }
-        .alert-error { background: #f8d7da; color: #721c24; }
+        .alert { padding: 12px; border-radius: 10px; margin-bottom: 20px; }
+        .alert-success { background: #d4edda; color: #155724; border-left: 4px solid #28a745; }
+        .alert-error { background: #f8d7da; color: #721c24; border-left: 4px solid #dc3545; }
         
-        /* Modal */
         .modal {
             display: none;
             position: fixed;
@@ -304,28 +382,33 @@ if ($pet_id > 0) {
         .modal-content {
             background: white;
             padding: 30px;
-            border-radius: 10px;
+            border-radius: 20px;
             min-width: 500px;
             max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
         }
-        .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; margin-bottom: 5px; font-weight: 500; }
-        .form-group input, .form-group select, .form-group textarea {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
+        
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
         }
+        .badge-pendente { background: #ffc107; color: #000; }
+        .badge-concluido { background: #28a745; color: #fff; }
+        .badge-cancelado { background: #dc3545; color: #fff; }
         
         @media (max-width: 768px) {
             .sidebar { width: 100%; height: auto; position: relative; }
             .top-bar { left: 0; position: relative; }
             .main-content { margin-left: 0; margin-top: 0; }
+            .modal-content { min-width: 90%; margin: 20px; }
         }
     </style>
 </head>
 <body>
-    <!-- Sidebar -->
     <div class="sidebar">
         <div class="sidebar-header">
             <img src="../img/PetProject.png" alt="PetProject">
@@ -345,71 +428,58 @@ if ($pet_id > 0) {
         </div>
     </div>
     
-    <!-- Top Bar -->
     <div class="top-bar">
         <h2><i class="fas fa-paw"></i> <?php echo $pet ? $pet['nome'] : 'Novo Pet'; ?></h2>
-        <div class="user-info">
+        <div>
             <span><i class="fas fa-user"></i> <?php echo $_SESSION['user_email']; ?></span>
             <a href="logout.php" class="btn-logout">Sair</a>
         </div>
     </div>
     
-    <!-- Main Content -->
     <div class="main-content">
         <?php if($message): ?><div class="alert alert-success"><?php echo $message; ?></div><?php endif; ?>
         <?php if($error): ?><div class="alert alert-error"><?php echo $error; ?></div><?php endif; ?>
         
         <?php if($is_new || !$pet): ?>
-        <!-- Formulário de Cadastro/Edição -->
         <div class="info-card">
-            <h3><?php echo $is_new ? 'Cadastrar Novo Pet' : 'Editar Pet'; ?></h3>
+            <h3>Cadastrar Novo Pet</h3>
             <form method="POST">
+                <input type="hidden" name="action" value="update_pet">
                 <input type="hidden" name="tutor_id" value="<?php echo $tutor_id; ?>">
                 <div class="form-group">
                     <label>Nome do Pet *</label>
-                    <input type="text" name="nome" required value="<?php echo $pet['nome'] ?? ''; ?>">
+                    <input type="text" name="nome" required>
                 </div>
                 <div class="form-group">
                     <label>Espécie</label>
                     <select name="especie">
-                        <option value="Canina" <?php echo ($pet['especie'] ?? '') == 'Canina' ? 'selected' : ''; ?>>Canina (Cachorro)</option>
-                        <option value="Felina" <?php echo ($pet['especie'] ?? '') == 'Felina' ? 'selected' : ''; ?>>Felina (Gato)</option>
-                        <option value="Outro" <?php echo ($pet['especie'] ?? '') == 'Outro' ? 'selected' : ''; ?>>Outro</option>
+                        <option value="Canina">Canina (Cachorro)</option>
+                        <option value="Felina">Felina (Gato)</option>
+                        <option value="Outro">Outro</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label>Raça</label>
-                    <input type="text" name="raca" value="<?php echo $pet['raca'] ?? ''; ?>">
+                    <input type="text" name="raca">
                 </div>
                 <div class="form-group">
                     <label>Peso (kg)</label>
-                    <input type="number" step="0.001" name="peso" value="<?php echo $pet['peso'] ?? ''; ?>">
+                    <input type="number" step="0.001" name="peso">
                 </div>
                 <div class="form-group">
                     <label>Sexo</label>
                     <select name="sexo">
-                        <option value="Macho" <?php echo ($pet['sexo'] ?? '') == 'Macho' ? 'selected' : ''; ?>>Macho</option>
-                        <option value="Fêmea" <?php echo ($pet['sexo'] ?? '') == 'Fêmea' ? 'selected' : ''; ?>>Fêmea</option>
+                        <option value="Macho">Macho</option>
+                        <option value="Fêmea">Fêmea</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label>Cor</label>
-                    <input type="text" name="cor" value="<?php echo $pet['cor'] ?? ''; ?>">
-                </div>
-                <div class="form-group">
-                    <label>Castrado</label>
-                    <select name="castrado">
-                        <option value="Sim" <?php echo ($pet['castrado'] ?? '') == 'Sim' ? 'selected' : ''; ?>>Sim</option>
-                        <option value="Não" <?php echo ($pet['castrado'] ?? '') == 'Não' ? 'selected' : ''; ?>>Não</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Microchip</label>
-                    <input type="text" name="microchip" value="<?php echo $pet['microchip'] ?? ''; ?>">
+                    <input type="text" name="cor">
                 </div>
                 <div class="form-group">
                     <label>Data de Nascimento</label>
-                    <input type="date" name="data_nascimento" value="<?php echo $pet['data_nascimento'] ?? ''; ?>">
+                    <input type="date" name="data_nascimento">
                 </div>
                 <button type="submit" class="btn btn-primary">Salvar</button>
                 <a href="tutores.php" class="btn btn-secondary">Cancelar</a>
@@ -417,64 +487,144 @@ if ($pet_id > 0) {
         </div>
         
         <?php else: ?>
-        <!-- Visualização do Pet (estilo SimpleVet) -->
         
-        <!-- Cabeçalho do Pet -->
         <div class="pet-header">
             <div class="pet-info">
                 <h1><?php echo htmlspecialchars($pet['nome']); ?></h1>
                 <span class="id">#<?php echo $pet['idPet']; ?></span>
             </div>
             <div class="pet-actions">
-                <button class="btn btn-primary" onclick="window.print()"><i class="fas fa-print"></i> Imprimir</button>
-                <a href="pet_detalhe.php?id=<?php echo $pet['idPet']; ?>&action=edit" class="btn btn-warning"><i class="fas fa-edit"></i> Alterar</a>
+                <button class="btn btn-primary" onclick="openEditModal()"><i class="fas fa-edit"></i> Editar Dados</button>
+                <button class="btn btn-secondary" onclick="window.print()"><i class="fas fa-print"></i> Imprimir</button>
             </div>
         </div>
         
-        <!-- Grid de Informações -->
         <div class="info-grid">
             <div class="info-card">
                 <h3><i class="fas fa-info-circle"></i> Informações do Pet</h3>
                 <div class="info-row"><div class="info-label">Espécie:</div><div class="info-value"><?php echo $pet['especie']; ?></div></div>
                 <div class="info-row"><div class="info-label">Raça:</div><div class="info-value"><?php echo $pet['raca'] ?: 'SRD'; ?></div></div>
-                <div class="info-row"><div class="info-label">Porte:</div><div class="info-value"><?php echo $pet['peso'] < 10 ? 'Pequeno' : ($pet['peso'] < 25 ? 'Médio' : 'Grande'); ?></div></div>
                 <div class="info-row"><div class="info-label">Sexo:</div><div class="info-value"><?php echo $pet['sexo']; ?></div></div>
-                <div class="info-row"><div class="info-label">Microchip:</div><div class="info-value"><?php echo $pet['microchip'] ?: 'Não informado'; ?></div></div>
                 <div class="info-row"><div class="info-label">Peso:</div><div class="info-value"><?php echo number_format($pet['peso'], 3, ',', '.'); ?> kg</div></div>
                 <div class="info-row"><div class="info-label">Cor:</div><div class="info-value"><?php echo $pet['cor'] ?: 'Não informada'; ?></div></div>
-                <div class="info-row"><div class="info-label">Castrado:</div><div class="info-value"><?php echo $pet['castrado'] ?? 'Não'; ?></div></div>
-                <div class="info-row"><div class="info-label">Última visita:</div><div class="info-value"><?php echo isset($registros_clinicos[0]) ? date('d/m/Y', strtotime($registros_clinicos[0]['data'])) : 'Nenhuma visita'; ?></div></div>
+                <div class="info-row"><div class="info-label">Castrado:</div><div class="info-value"><?php echo ($pet['castrado'] == 1) ? 'Sim' : 'Não'; ?></div></div>
+                <div class="info-row"><div class="info-label">Microchip:</div><div class="info-value"><?php echo $pet['microchip'] ?: 'Não informado'; ?></div></div>
             </div>
             
             <div class="info-card">
-                <h3><i class="fas fa-user"></i> Informações do Tutor</h3>
+                <h3><i class="fas fa-user"></i> Tutor</h3>
                 <div class="info-row"><div class="info-label">Nome:</div><div class="info-value"><?php echo htmlspecialchars($tutor['nome']); ?></div></div>
-                <div class="info-row"><div class="info-label">CPF/CNPJ:</div><div class="info-value"><?php echo $tutor['cpf'] ?: 'Não informado'; ?></div></div>
+                <div class="info-row"><div class="info-label">CPF:</div><div class="info-value"><?php echo $tutor['cpf'] ?: 'Não informado'; ?></div></div>
                 <div class="info-row"><div class="info-label">Telefone:</div><div class="info-value"><?php echo $tutor['telefone']; ?></div></div>
                 <div class="info-row"><div class="info-label">Endereço:</div><div class="info-value"><?php echo $tutor['endereco']; ?></div></div>
             </div>
         </div>
         
-        <!-- Abas -->
         <div class="tabs">
-            <button class="tab-btn active" data-tab="visao-geral">Visão Geral</button>
-            <button class="tab-btn" data-tab="comanda">Comanda</button>
-            <button class="tab-btn" data-tab="agendamentos">Agendamentos</button>
-            <button class="tab-btn" data-tab="registros">Registros Clínicos</button>
-            <button class="tab-btn" data-tab="exames">Exames</button>
-            <button class="tab-btn" data-tab="vacinas">Vacinas</button>
-            <button class="tab-btn" data-tab="receitas">Receitas</button>
+            <button class="tab-btn active" data-tab="registros">📋 Registros Clínicos</button>
+            <button class="tab-btn" data-tab="observacoes">📝 Observações</button>
+            <button class="tab-btn" data-tab="diagnostico">🏥 Diagnóstico</button>
+            <button class="tab-btn" data-tab="notas">📌 Notas Gerais</button>
+            <button class="tab-btn" data-tab="atividades">⏰ Atividades Agendadas</button>
+            <button class="tab-btn" data-tab="peso">⚖️ Histórico de Peso</button>
         </div>
         
-        <!-- Tab: Visão Geral -->
-        <div id="visao-geral" class="tab-content active">
-            <h3>Histórico de Peso</h3>
-            <button class="btn btn-primary btn-sm" onclick="openPesoModal()"><i class="fas fa-plus"></i> Adicionar</button>
-            <table class="data-table">
+        <div id="registros" class="tab-content active">
+            <button class="btn btn-primary btn-sm" onclick="openRegistroModal()">
+                <i class="fas fa-plus"></i> Adicionar Registro Clínico
+            </button>
+            <table class="data-table" style="margin-top: 15px;">
+                <thead>
+                    <tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Medicamentos</th><th>Procedimentos</th></tr>
+                </thead>
+                <tbody>
+                    <?php if(empty($registros_clinicos)): ?>
+                        <tr><td colspan="5" class="empty-message">Nenhum registro clínico encontrado</td></tr>
+                    <?php else: ?>
+                        <?php foreach($registros_clinicos as $rc): ?>
+                        <tr>
+                            <td><?php echo date('d/m/Y', strtotime($rc['data_registro'])); ?></td>
+                            <td><?php echo $rc['tipo_registro']; ?></td>
+                            <td><?php echo nl2br(htmlspecialchars($rc['descricao'])); ?></td>
+                            <td><?php echo nl2br(htmlspecialchars($rc['medicamentos'])); ?></td>
+                            <td><?php echo nl2br(htmlspecialchars($rc['procedimentos'])); ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+        
+        <div id="observacoes" class="tab-content">
+            <div class="info-card">
+                <h3><i class="fas fa-comment-dots"></i> Observações do Pet</h3>
+                <div class="info-value" style="white-space: pre-wrap; line-height: 1.6;">
+                    <?php echo !empty($pet['observacoes']) ? nl2br(htmlspecialchars($pet['observacoes'])) : '<em style="color: #999;">Nenhuma observação registrada</em>'; ?>
+                </div>
+            </div>
+        </div>
+        
+        <div id="diagnostico" class="tab-content">
+            <div class="info-card">
+                <h3><i class="fas fa-stethoscope"></i> Diagnóstico</h3>
+                <div class="info-value" style="white-space: pre-wrap; line-height: 1.6;">
+                    <?php echo !empty($pet['diagnostico']) ? nl2br(htmlspecialchars($pet['diagnostico'])) : '<em style="color: #999;">Nenhum diagnóstico registrado</em>'; ?>
+                </div>
+            </div>
+        </div>
+        
+        <div id="notas" class="tab-content">
+            <div class="info-card">
+                <h3><i class="fas fa-pen-alt"></i> Notas Gerais</h3>
+                <div class="info-value" style="white-space: pre-wrap; line-height: 1.6;">
+                    <?php echo !empty($pet['notas_gerais']) ? nl2br(htmlspecialchars($pet['notas_gerais'])) : '<em style="color: #999;">Nenhuma nota registrada</em>'; ?>
+                </div>
+            </div>
+            <?php if(!empty($pet['alertas'])): ?>
+                <div class="info-card" style="margin-top: 15px; border-left: 4px solid #ffc107;">
+                    <h3><i class="fas fa-bell"></i> Alertas</h3>
+                    <div class="info-value" style="white-space: pre-wrap; line-height: 1.6; color: #856404;">
+                        <?php echo nl2br(htmlspecialchars($pet['alertas'])); ?>
+                    </div>
+                </div>
+            <?php endif; ?>
+        </div>
+        
+        <div id="atividades" class="tab-content">
+            <button class="btn btn-primary btn-sm" onclick="openAtividadeModal()">
+                <i class="fas fa-plus"></i> Nova Atividade
+            </button>
+            <table class="data-table" style="margin-top: 15px;">
+                <thead>
+                    <tr><th>Data</th><th>Hora</th><th>Tipo</th><th>Descrição</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                    <?php if(empty($atividades)): ?>
+                        <tr><td colspan="5" class="empty-message">Nenhuma atividade agendada</td></tr>
+                    <?php else: ?>
+                        <?php foreach($atividades as $atv): ?>
+                        <tr>
+                            <td><?php echo date('d/m/Y', strtotime($atv['data_atividade'])); ?></td>
+                            <td><?php echo substr($atv['hora_atividade'], 0, 5); ?></td>
+                            <td><?php echo $atv['tipo_atividade']; ?></td>
+                            <td><?php echo htmlspecialchars($atv['descricao']); ?></td>
+                            <td><span class="badge badge-<?php echo $atv['status'] == 'Concluído' ? 'concluido' : ($atv['status'] == 'Cancelado' ? 'cancelado' : 'pendente'); ?>"><?php echo $atv['status']; ?></span></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+        
+        <div id="peso" class="tab-content">
+            <button class="btn btn-primary btn-sm" onclick="openPesoModal()">
+                <i class="fas fa-plus"></i> Adicionar Peso
+            </button>
+            <table class="data-table" style="margin-top: 15px;">
                 <thead><tr><th>Data</th><th>Peso (kg)</th></tr></thead>
                 <tbody>
                     <?php if(empty($historico_peso)): ?>
-                    <tr><td colspan="2" class="empty-message">Nenhum registro de peso</td></tr>
+                        <tr><td colspan="2" class="empty-message">Nenhum registro de peso</td></tr>
                     <?php else: ?>
                         <?php foreach($historico_peso as $hp): ?>
                         <tr><td><?php echo date('d/m/Y', strtotime($hp['data'])); ?></td><td><?php echo $hp['peso']; ?> kg</td></tr>
@@ -484,96 +634,166 @@ if ($pet_id > 0) {
             </table>
         </div>
         
-        <!-- Tab: Comanda -->
-        <div id="comanda" class="tab-content">
-            <button class="btn btn-primary btn-sm" onclick="openComandaModal()"><i class="fas fa-plus"></i> Adicionar Produto/Serviço</button>
-            <div class="empty-message">Nenhum item na comanda</div>
-        </div>
-        
-        <!-- Tab: Agendamentos -->
-        <div id="agendamentos" class="tab-content">
-            <button class="btn btn-primary btn-sm" onclick="openAgendamentoModal()"><i class="fas fa-plus"></i> Novo Agendamento</button>
-            <table class="data-table">
-                <thead><tr><th>Data</th><th>Hora</th><th>Status</th><th>Ações</th></tr></thead>
-                <tbody>
-                    <?php if(empty($agendamentos)): ?>
-                    <tr><td colspan="4" class="empty-message">Nenhum agendamento</td></tr>
-                    <?php else: ?>
-                        <?php foreach($agendamentos as $ag): ?>
-                        <tr>
-                            <td><?php echo date('d/m/Y', strtotime($ag['data'])); ?></td>
-                            <td><?php echo substr($ag['hora'], 0, 5); ?></td>
-                            <td>Agendado</td>
-                            <td><button class="btn btn-danger btn-sm" onclick="deleteAgendamento(<?php echo $ag['idAgendamento']; ?>)">Cancelar</button></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-        
-        <!-- Tab: Registros Clínicos -->
-        <div id="registros" class="tab-content">
-            <a href="novo_atendimento.php?pet_id=<?php echo $pet['idPet']; ?>" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> Adicionar Registro</a>
-            <table class="data-table">
-                <thead><tr><th>Data</th><th>Serviço</th><th>Funcionário</th></tr></thead>
-                <tbody>
-                    <?php if(empty($registros_clinicos)): ?>
-                    <tr><td colspan="3" class="empty-message">Nenhum registro clínico</td></tr>
-                    <?php else: ?>
-                        <?php foreach($registros_clinicos as $rc): ?>
-                        <tr>
-                            <td><?php echo date('d/m/Y', strtotime($rc['data'])); ?></td>
-                            <td><?php echo $rc['servico']; ?></td>
-                            <td><?php echo $rc['funcionario']; ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-        
-        <!-- Tab: Exames -->
-        <div id="exames" class="tab-content">
-            <button class="btn btn-primary btn-sm" onclick="openExameModal()"><i class="fas fa-plus"></i> Solicitar Exame</button>
-            <div class="empty-message">Nenhum exame solicitado</div>
-        </div>
-        
-        <!-- Tab: Vacinas -->
-        <div id="vacinas" class="tab-content">
-            <button class="btn btn-primary btn-sm" onclick="openVacinaModal()"><i class="fas fa-plus"></i> Registrar Vacina</button>
-            <div class="empty-message">Nenhuma vacina registrada</div>
-        </div>
-        
-        <!-- Tab: Receitas -->
-        <div id="receitas" class="tab-content">
-            <button class="btn btn-primary btn-sm" onclick="openReceitaModal()"><i class="fas fa-plus"></i> Adicionar Receita</button>
-            <table class="data-table">
-                <thead><tr><th>Produto/Medicamento</th><th>Quantidade</th><th>Instruções</th><th>Data</th></tr></thead>
-                <tbody>
-                    <?php if(empty($receitas)): ?>
-                    <tr><td colspan="4" class="empty-message">Nenhuma receita registrada</td></tr>
-                    <?php else: ?>
-                        <?php foreach($receitas as $rec): ?>
-                        <tr>
-                            <td><?php echo $rec['produto_nome']; ?></td>
-                            <td><?php echo $rec['quantidade']; ?></td>
-                            <td><?php echo $rec['instrucoes']; ?></td>
-                            <td><?php echo date('d/m/Y', strtotime($rec['data_indicacao'])); ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-        
         <?php endif; ?>
     </div>
     
-    <!-- Modal para Adicionar Peso -->
+    <div id="editModal" class="modal">
+        <div class="modal-content">
+            <h3><i class="fas fa-edit"></i> Editar <?php echo htmlspecialchars($pet['nome']); ?></h3>
+            <form method="POST">
+                <input type="hidden" name="action" value="update_pet">
+                <div class="form-group">
+                    <label>Nome do Pet</label>
+                    <input type="text" name="nome" value="<?php echo htmlspecialchars($pet['nome']); ?>" required>
+                </div>
+                <div class="form-group">
+                    <label>Espécie</label>
+                    <select name="especie">
+                        <option value="Canina" <?php echo $pet['especie'] == 'Canina' ? 'selected' : ''; ?>>Canina</option>
+                        <option value="Felina" <?php echo $pet['especie'] == 'Felina' ? 'selected' : ''; ?>>Felina</option>
+                        <option value="Outro" <?php echo $pet['especie'] == 'Outro' ? 'selected' : ''; ?>>Outro</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Raça</label>
+                    <input type="text" name="raca" value="<?php echo htmlspecialchars($pet['raca']); ?>">
+                </div>
+                <div class="form-group">
+                    <label>Peso (kg)</label>
+                    <input type="number" step="0.001" name="peso" value="<?php echo $pet['peso']; ?>">
+                </div>
+                <div class="form-group">
+                    <label>Sexo</label>
+                    <select name="sexo">
+                        <option value="Macho" <?php echo $pet['sexo'] == 'Macho' ? 'selected' : ''; ?>>Macho</option>
+                        <option value="Fêmea" <?php echo $pet['sexo'] == 'Fêmea' ? 'selected' : ''; ?>>Fêmea</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Cor</label>
+                    <input type="text" name="cor" value="<?php echo htmlspecialchars($pet['cor']); ?>">
+                </div>
+                <div class="form-group">
+                    <label>Castrado</label>
+                    <select name="castrado">
+                        <option value="Sim" <?php echo $pet['castrado'] == 1 ? 'selected' : ''; ?>>Sim</option>
+                        <option value="Não" <?php echo $pet['castrado'] == 0 ? 'selected' : ''; ?>>Não</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Microchip</label>
+                    <input type="text" name="microchip" value="<?php echo htmlspecialchars($pet['microchip']); ?>">
+                </div>
+                <div class="form-group">
+                    <label>Data de Nascimento</label>
+                    <input type="date" name="data_nascimento" value="<?php echo $pet['data_nascimento']; ?>">
+                </div>
+                <div class="form-group">
+                    <label>Observações</label>
+                    <textarea name="observacoes" rows="3"><?php echo htmlspecialchars($pet['observacoes']); ?></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Diagnóstico</label>
+                    <textarea name="diagnostico" rows="3"><?php echo htmlspecialchars($pet['diagnostico']); ?></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Notas Gerais</label>
+                    <textarea name="notas_gerais" rows="3"><?php echo htmlspecialchars($pet['notas_gerais']); ?></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Alertas</label>
+                    <textarea name="alertas" rows="2" placeholder="Alertas importantes sobre o pet..."><?php echo htmlspecialchars($pet['alertas']); ?></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Salvar Alterações</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('editModal')">Cancelar</button>
+            </form>
+        </div>
+    </div>
+    
+    <div id="registroModal" class="modal">
+        <div class="modal-content">
+            <h3><i class="fas fa-notes-medical"></i> Adicionar Registro Clínico</h3>
+            <form method="POST">
+                <input type="hidden" name="action" value="add_registro">
+                <div class="form-group">
+                    <label>Data</label>
+                    <input type="date" name="data_registro" required>
+                </div>
+                <div class="form-group">
+                    <label>Tipo de Registro</label>
+                    <select name="tipo_registro" required>
+                        <option value="Consulta">🏥 Consulta</option>
+                        <option value="Vacina">💉 Vacina</option>
+                        <option value="Exame">🔬 Exame</option>
+                        <option value="Cirurgia">🔪 Cirurgia</option>
+                        <option value="Retorno">📋 Retorno</option>
+                        <option value="Emergência">🚨 Emergência</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Descrição</label>
+                    <textarea name="descricao" rows="3" required placeholder="Descreva o atendimento, sintomas, etc..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Medicamentos Prescritos</label>
+                    <textarea name="medicamentos" rows="2" placeholder="Medicamentos, dosagens, período..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Procedimentos Realizados</label>
+                    <textarea name="procedimentos" rows="2" placeholder="Procedimentos, exames, etc..."></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Salvar</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('registroModal')">Cancelar</button>
+            </form>
+        </div>
+    </div>
+    
+    <div id="atividadeModal" class="modal">
+        <div class="modal-content">
+            <h3><i class="fas fa-calendar-plus"></i> Agendar Atividade</h3>
+            <form method="POST">
+                <input type="hidden" name="action" value="add_atividade">
+                <div class="form-group">
+                    <label>Data</label>
+                    <input type="date" name="data_atividade" required>
+                </div>
+                <div class="form-group">
+                    <label>Hora</label>
+                    <input type="time" name="hora_atividade" required>
+                </div>
+                <div class="form-group">
+                    <label>Tipo de Atividade</label>
+                    <select name="tipo_atividade" required>
+                        <option value="Consulta">🏥 Consulta</option>
+                        <option value="Vacina">💉 Vacina</option>
+                        <option value="Banho">🛁 Banho</option>
+                        <option value="Tosa">✂️ Tosa</option>
+                        <option value="Cirurgia">🔪 Cirurgia</option>
+                        <option value="Exame">🔬 Exame</option>
+                        <option value="Retorno">📋 Retorno</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Descrição</label>
+                    <textarea name="descricao_atividade" rows="2" placeholder="Detalhes da atividade..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select name="status_atividade">
+                        <option value="Pendente">⏳ Pendente</option>
+                        <option value="Concluído">✅ Concluído</option>
+                        <option value="Cancelado">❌ Cancelado</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn btn-primary">Agendar</button>
+                <button type="button" class="btn btn-secondary" onclick="closeModal('atividadeModal')">Cancelar</button>
+            </form>
+        </div>
+    </div>
+    
     <div id="pesoModal" class="modal">
         <div class="modal-content">
-            <h3>Adicionar Registro de Peso</h3>
+            <h3><i class="fas fa-weight"></i> Registrar Peso</h3>
             <form method="POST" action="add_peso.php">
                 <input type="hidden" name="pet_id" value="<?php echo $pet_id; ?>">
                 <div class="form-group">
@@ -589,61 +809,8 @@ if ($pet_id > 0) {
             </form>
         </div>
     </div>
-    
-    <!-- Modal para Agendamento -->
-    <div id="agendamentoModal" class="modal">
-        <div class="modal-content">
-            <h3>Novo Agendamento</h3>
-            <form method="POST" action="add_agendamento.php">
-                <input type="hidden" name="pet_id" value="<?php echo $pet_id; ?>">
-                <div class="form-group">
-                    <label>Data</label>
-                    <input type="date" name="data" required>
-                </div>
-                <div class="form-group">
-                    <label>Hora</label>
-                    <input type="time" name="hora" required>
-                </div>
-                <button type="submit" class="btn btn-primary">Salvar</button>
-                <button type="button" class="btn btn-secondary" onclick="closeModal('agendamentoModal')">Cancelar</button>
-            </form>
-        </div>
-    </div>
-    
-    <!-- Modal para Receita -->
-    <div id="receitaModal" class="modal">
-        <div class="modal-content">
-            <h3>Adicionar Receita/Indicação</h3>
-            <form method="POST" action="add_receita.php">
-                <input type="hidden" name="pet_id" value="<?php echo $pet_id; ?>">
-                <div class="form-group">
-                    <label>Produto/Medicamento</label>
-                    <select name="produto_id" required>
-                        <option value="">Selecione...</option>
-                        <?php
-                        $produtos = $conn->query("SELECT idProduto, nome FROM produto");
-                        while($prod = $produtos->fetch_assoc()):
-                        ?>
-                        <option value="<?php echo $prod['idProduto']; ?>"><?php echo $prod['nome']; ?></option>
-                        <?php endwhile; ?>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Quantidade/Dosagem</label>
-                    <input type="text" name="quantidade" placeholder="Ex: 1 comprimido a cada 12h">
-                </div>
-                <div class="form-group">
-                    <label>Instruções</label>
-                    <textarea name="instrucoes" rows="3" placeholder="Instruções de uso..."></textarea>
-                </div>
-                <button type="submit" class="btn btn-primary">Salvar</button>
-                <button type="button" class="btn btn-secondary" onclick="closeModal('receitaModal')">Cancelar</button>
-            </form>
-        </div>
-    </div>
-    
+
     <script>
-        // Tabs
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -653,9 +820,32 @@ if ($pet_id > 0) {
             });
         });
         
+        function openEditModal() { document.getElementById('editModal').style.display = 'flex'; }
+        function openRegistroModal() { document.getElementById('registroModal').style.display = 'flex'; }
+        function openAtividadeModal() { document.getElementById('atividadeModal').style.display = 'flex'; }
         function openPesoModal() { document.getElementById('pesoModal').style.display = 'flex'; }
-        function openAgendamentoModal() { document.getElementById('agendamentoModal').style.display = 'flex'; }
-        function openReceitaModal() { document.getElementById('receitaModal').style.display = 'flex'; }
-        function openExameModal() { alert('Funcionalidade em desenvolvimento'); }
-        function openVacinaModal() { alert('Funcionalidade em desenvolvimento'); }
-        function openComandaModal
+        
+        function closeModal(modalId) { 
+            document.getElementById(modalId).style.display = 'none'; 
+        }
+        
+        window.onclick = function(event) {
+            const modals = ['editModal', 'registroModal', 'atividadeModal', 'pesoModal'];
+            modals.forEach(modalId => {
+                let modal = document.getElementById(modalId);
+                if (event.target == modal) {
+                    modal.style.display = 'none';
+                }
+            });
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            const today = new Date().toISOString().split('T')[0];
+            const dateInputs = document.querySelectorAll('input[type="date"]');
+            dateInputs.forEach(input => {
+                if (!input.value) input.value = today;
+            });
+        });
+    </script>
+</body>
+</html>
