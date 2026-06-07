@@ -1,4 +1,5 @@
 <?php
+// dashboard.php
 require_once '../config/database.php';
 require_once '../includes/auth.php';
 
@@ -24,24 +25,29 @@ $result_atendimentos = $conn->query($sql_atendimentos_hoje);
 $total_atendimentos_hoje = $result_atendimentos->fetch_assoc()['total'];
 
 // Próximos agendamentos
-$sql_agendamentos = "SELECT a.data, a.hora, p.nome as pet_nome, t.nome as tutor_nome 
+$sql_agendamentos = "SELECT a.idAgendamento, a.data, a.hora, p.nome as pet_nome, t.nome as tutor_nome 
                      FROM agendamento a 
                      JOIN pet p ON a.idPet = p.idPet 
                      JOIN tutor t ON p.idTutor = t.idTutor 
                      WHERE a.data >= CURDATE() 
                      ORDER BY a.data, a.hora 
-                     LIMIT 5";
+                     LIMIT 10";
 $agendamentos = $conn->query($sql_agendamentos);
 
-// Últimos atendimentos
-$sql_atendimentos = "SELECT a.data, a.hora, p.nome as pet_nome, s.tipo as servico, f.nome as funcionario 
+// Últimos atendimentos - CORRIGIDO (sem coluna observacoes)
+$sql_atendimentos = "SELECT a.idAtendimento, a.data, a.hora, p.nome as pet_nome, s.tipo as servico, f.nome as funcionario
                      FROM atendimento a 
                      JOIN pet p ON a.idPet = p.idPet 
                      JOIN servico s ON a.idServico = s.idServico 
                      JOIN funcionario f ON a.idFuncionario = f.idFuncionario 
                      ORDER BY a.data DESC, a.hora DESC 
-                     LIMIT 5";
+                     LIMIT 10";
 $atendimentos = $conn->query($sql_atendimentos);
+
+// Total de agendamentos para hoje
+$sql_agendamentos_hoje = "SELECT COUNT(*) as total FROM agendamento WHERE data = CURDATE()";
+$result_agendamentos_hoje = $conn->query($sql_agendamentos_hoje);
+$total_agendamentos_hoje = $result_agendamentos_hoje->fetch_assoc()['total'];
 
 $conn->close();
 ?>
@@ -64,7 +70,7 @@ $conn->close();
 
         body {
             font-family: 'Poppins', sans-serif;
-            background-color: #f5f5f5;
+            background: linear-gradient(135deg, #f5f7fa 0%, #e9ecef 100%);
         }
 
         /* Sidebar */
@@ -180,13 +186,20 @@ $conn->close();
         }
         
         .stat-card {
-            background-color: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            background: white;
+            padding: 25px;
+            border-radius: 20px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
             display: flex;
             align-items: center;
             justify-content: space-between;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(78, 205, 196, 0.1);
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
         }
         
         .stat-info h3 {
@@ -208,19 +221,55 @@ $conn->close();
         
         /* Tables */
         .data-section {
-            background-color: white;
-            border-radius: 10px;
-            padding: 20px;
+            background: white;
+            border-radius: 20px;
+            padding: 25px;
             margin-bottom: 30px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+            transition: all 0.3s ease;
+        }
+        
+        .data-section:hover {
+            box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+        }
+        
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 15px;
         }
         
         .section-title {
             font-size: 1.3rem;
-            margin-bottom: 20px;
             color: #292F36;
             border-left: 4px solid #4ECDC4;
             padding-left: 15px;
+        }
+        
+        .section-title i {
+            color: #4ECDC4;
+            margin-right: 8px;
+        }
+        
+        .btn-link {
+            background: none;
+            border: none;
+            color: #4ECDC4;
+            cursor: pointer;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-link:hover {
+            color: #3bb3aa;
+            transform: translateX(3px);
         }
         
         .data-table {
@@ -251,13 +300,19 @@ $conn->close();
             color: #666;
         }
         
-        .alert-success {
-            background-color: #d4edda;
-            color: #155724;
-            padding: 12px;
-            border-radius: 5px;
-            margin-bottom: 20px;
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
         }
+        
+        .badge-consulta { background: #4ECDC4; color: white; }
+        .badge-vacina { background: #95E77E; color: white; }
+        .badge-cirurgia { background: #E74C3C; color: white; }
+        .badge-banho { background: #3498DB; color: white; }
+        .badge-tosa { background: #F39C12; color: white; }
         
         @media (max-width: 768px) {
             .sidebar {
@@ -276,6 +331,15 @@ $conn->close();
             .stats-grid {
                 grid-template-columns: 1fr;
             }
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .main-content {
+            animation: fadeIn 0.5s ease;
         }
     </style>
 </head>
@@ -361,13 +425,28 @@ $conn->close();
                     <i class="fas fa-stethoscope"></i>
                 </div>
             </div>
+            
+            <div class="stat-card">
+                <div class="stat-info">
+                    <h3>Agendamentos Hoje</h3>
+                    <div class="number"><?php echo $total_agendamentos_hoje; ?></div>
+                </div>
+                <div class="stat-icon">
+                    <i class="fas fa-calendar-alt"></i>
+                </div>
+            </div>
         </div>
         
         <!-- Próximos Agendamentos -->
         <div class="data-section">
-            <h3 class="section-title">
-                <i class="fas fa-calendar-alt"></i> Próximos Agendamentos
-            </h3>
+            <div class="section-header">
+                <h3 class="section-title">
+                    <i class="fas fa-calendar-alt"></i> Próximos Agendamentos
+                </h3>
+                <a href="agendamentos.php" class="btn-link">
+                    Ver todos <i class="fas fa-arrow-right"></i>
+                </a>
+            </div>
             <?php if ($agendamentos && $agendamentos->num_rows > 0): ?>
                 <table class="data-table">
                     <thead>
@@ -398,9 +477,14 @@ $conn->close();
         
         <!-- Últimos Atendimentos -->
         <div class="data-section">
-            <h3 class="section-title">
-                <i class="fas fa-history"></i> Últimos Atendimentos
-            </h3>
+            <div class="section-header">
+                <h3 class="section-title">
+                    <i class="fas fa-history"></i> Últimos Atendimentos
+                </h3>
+                <a href="atendimentos.php" class="btn-link">
+                    Ver todos <i class="fas fa-arrow-right"></i>
+                </a>
+            </div>
             <?php if ($atendimentos && $atendimentos->num_rows > 0): ?>
                 <table class="data-table">
                     <thead>

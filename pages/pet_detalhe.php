@@ -15,6 +15,11 @@ $pet_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $tutor_id = isset($_GET['tutor_id']) ? (int)$_GET['tutor_id'] : 0;
 $is_new = (isset($_GET['action']) && $_GET['action'] === 'new') || $pet_id == 0;
 
+// Mensagem de sucesso via GET (após redirecionamento)
+if (isset($_GET['success'])) {
+    $message = 'Pet cadastrado com sucesso!';
+}
+
 // Buscar dados do pet se for edição
 $pet = null;
 if (!$is_new && $pet_id > 0) {
@@ -46,42 +51,65 @@ if ($tutor_id > 0) {
     $tutor = $result->fetch_assoc();
 }
 
-// Processar formulário de edição
+// Processar formulário de edição/cadastro
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'update_pet') {
         $nome = isset($_POST['nome']) ? trim($_POST['nome']) : '';
         $especie = isset($_POST['especie']) ? $_POST['especie'] : 'Canina';
         $raca = isset($_POST['raca']) ? trim($_POST['raca']) : '';
-        $peso = isset($_POST['peso']) ? $_POST['peso'] : 0;
+        $peso = isset($_POST['peso']) ? (float)$_POST['peso'] : 0;
         $sexo = isset($_POST['sexo']) ? $_POST['sexo'] : 'Macho';
         $cor = isset($_POST['cor']) ? trim($_POST['cor']) : '';
         $castrado = (isset($_POST['castrado']) && $_POST['castrado'] === 'Sim') ? 1 : 0;
         $microchip = isset($_POST['microchip']) ? trim($_POST['microchip']) : '';
-        $data_nascimento = isset($_POST['data_nascimento']) ? $_POST['data_nascimento'] : null;
+        $data_nascimento = isset($_POST['data_nascimento']) && !empty($_POST['data_nascimento']) ? $_POST['data_nascimento'] : null;
         $observacoes = isset($_POST['observacoes']) ? trim($_POST['observacoes']) : '';
         $diagnostico = isset($_POST['diagnostico']) ? trim($_POST['diagnostico']) : '';
         $notas_gerais = isset($_POST['notas_gerais']) ? trim($_POST['notas_gerais']) : '';
         $alertas = isset($_POST['alertas']) ? trim($_POST['alertas']) : '';
-        
-        $stmt = $conn->prepare("UPDATE pet SET nome=?, especie=?, raca=?, peso=?, sexo=?, cor=?, castrado=?, microchip=?, data_nascimento=?, observacoes=?, diagnostico=?, notas_gerais=?, alertas=? WHERE idPet=?");
-        $stmt->bind_param("sssdsssssssssi", $nome, $especie, $raca, $peso, $sexo, $cor, $castrado, $microchip, $data_nascimento, $observacoes, $diagnostico, $notas_gerais, $alertas, $pet_id);
-        
-        if ($stmt->execute()) {
-            $message = "Informações do pet atualizadas com sucesso!";
-            // Recarregar dados do pet
-            $result = $conn->query("SELECT p.*, t.nome as tutor_nome, t.cpf, t.telefone, t.endereco FROM pet p JOIN tutor t ON p.idTutor = t.idTutor WHERE p.idPet = $pet_id");
-            $pet = $result->fetch_assoc();
-            if ($pet) {
-                $pet['microchip'] = isset($pet['microchip']) ? $pet['microchip'] : '';
-                $pet['observacoes'] = isset($pet['observacoes']) ? $pet['observacoes'] : '';
-                $pet['diagnostico'] = isset($pet['diagnostico']) ? $pet['diagnostico'] : '';
-                $pet['notas_gerais'] = isset($pet['notas_gerais']) ? $pet['notas_gerais'] : '';
-                $pet['alertas'] = isset($pet['alertas']) ? $pet['alertas'] : '';
+
+        if ($pet_id > 0) {
+            // ========== ATUALIZA PET EXISTENTE ==========
+            $stmt = $conn->prepare("UPDATE pet SET nome=?, especie=?, raca=?, peso=?, sexo=?, cor=?, castrado=?, microchip=?, data_nascimento=?, observacoes=?, diagnostico=?, notas_gerais=?, alertas=? WHERE idPet=?");
+            $stmt->bind_param("sssdsssssssssi", $nome, $especie, $raca, $peso, $sexo, $cor, $castrado, $microchip, $data_nascimento, $observacoes, $diagnostico, $notas_gerais, $alertas, $pet_id);
+            
+            if ($stmt->execute()) {
+                $message = "Informações do pet atualizadas com sucesso!";
+                // Recarregar dados do pet
+                $result = $conn->query("SELECT p.*, t.nome as tutor_nome, t.cpf, t.telefone, t.endereco FROM pet p JOIN tutor t ON p.idTutor = t.idTutor WHERE p.idPet = $pet_id");
+                $pet = $result->fetch_assoc();
+                if ($pet) {
+                    $pet['microchip'] = isset($pet['microchip']) ? $pet['microchip'] : '';
+                    $pet['observacoes'] = isset($pet['observacoes']) ? $pet['observacoes'] : '';
+                    $pet['diagnostico'] = isset($pet['diagnostico']) ? $pet['diagnostico'] : '';
+                    $pet['notas_gerais'] = isset($pet['notas_gerais']) ? $pet['notas_gerais'] : '';
+                    $pet['alertas'] = isset($pet['alertas']) ? $pet['alertas'] : '';
+                }
+            } else {
+                $error = "Erro ao atualizar: " . $conn->error;
             }
+            $stmt->close();
         } else {
-            $error = "Erro ao atualizar: " . $conn->error;
+            // ========== CADASTRA NOVO PET (INSERT) ==========
+            $tutor_id_insert = isset($_POST['tutor_id']) ? (int)$_POST['tutor_id'] : 0;
+            if ($tutor_id_insert <= 0) {
+                $error = "ID do tutor inválido. Não foi possível cadastrar o pet.";
+            } else {
+                $stmt = $conn->prepare("INSERT INTO pet (idTutor, nome, especie, raca, peso, sexo, cor, castrado, microchip, data_nascimento, observacoes, diagnostico, notas_gerais, alertas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->bind_param("isssdsssssssss", $tutor_id_insert, $nome, $especie, $raca, $peso, $sexo, $cor, $castrado, $microchip, $data_nascimento, $observacoes, $diagnostico, $notas_gerais, $alertas);
+                
+                if ($stmt->execute()) {
+                    $new_id = $conn->insert_id;
+                    // Redireciona para a página de detalhes do novo pet
+                    header("Location: pet_detalhe.php?id=$new_id&success=1");
+                    
+                    exit();
+                } else {
+                    $error = "Erro ao cadastrar pet: " . $stmt->error;
+                }
+                $stmt->close();
+            }
         }
-        $stmt->close();
     }
     
     // Adicionar registro clínico
@@ -480,6 +508,22 @@ if ($pet_id > 0) {
                 <div class="form-group">
                     <label>Data de Nascimento</label>
                     <input type="date" name="data_nascimento">
+                </div>
+                <!-- Campos adicionais para consistência com a edição -->
+                <div class="form-group">
+                    <label>Castrado</label>
+                    <select name="castrado">
+                        <option value="Não">Não</option>
+                        <option value="Sim">Sim</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Microchip</label>
+                    <input type="text" name="microchip" placeholder="Código do microchip (se houver)">
+                </div>
+                <div class="form-group">
+                    <label>Observações</label>
+                    <textarea name="observacoes" rows="2" placeholder="Observações iniciais..."></textarea>
                 </div>
                 <button type="submit" class="btn btn-primary">Salvar</button>
                 <a href="tutores.php" class="btn btn-secondary">Cancelar</a>

@@ -3,7 +3,9 @@
 ?>
 <div class="sidebar">
     <div class="sidebar-header">
-        <img src="../img/PetProject.png" alt="PetProject">
+        <a href="dashboard.php"> <img src="../img/PetProject.png" alt="PetProject"> </a>
+                    
+
         <h3>PetProject</h3>
         <p>Sistema Veterinário</p>
     </div>
