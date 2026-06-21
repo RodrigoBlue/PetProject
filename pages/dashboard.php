@@ -19,8 +19,10 @@ $sql_tutores = "SELECT COUNT(*) as total FROM tutor";
 $result_tutores = $conn->query($sql_tutores);
 $total_tutores = $result_tutores->fetch_assoc()['total'];
 
-// Total de atendimentos hoje
-$sql_atendimentos_hoje = "SELECT COUNT(*) as total FROM atendimento WHERE data = CURDATE()";
+// Total de atendimentos hoje (incluindo registros clínicos) - CORRIGIDO
+$sql_atendimentos_hoje = "SELECT 
+    (SELECT COUNT(*) FROM atendimento WHERE data = CURDATE()) + 
+    (SELECT COUNT(*) FROM pet_registros_clinicos WHERE data_registro = CURDATE()) as total";
 $result_atendimentos = $conn->query($sql_atendimentos_hoje);
 $total_atendimentos_hoje = $result_atendimentos->fetch_assoc()['total'];
 
@@ -34,15 +36,57 @@ $sql_agendamentos = "SELECT a.idAgendamento, a.data, a.hora, p.nome as pet_nome,
                      LIMIT 10";
 $agendamentos = $conn->query($sql_agendamentos);
 
-// Últimos atendimentos - CORRIGIDO (sem coluna observacoes)
-$sql_atendimentos = "SELECT a.idAtendimento, a.data, a.hora, p.nome as pet_nome, s.tipo as servico, f.nome as funcionario
-                     FROM atendimento a 
-                     JOIN pet p ON a.idPet = p.idPet 
-                     JOIN servico s ON a.idServico = s.idServico 
-                     JOIN funcionario f ON a.idFuncionario = f.idFuncionario 
-                     ORDER BY a.data DESC, a.hora DESC 
-                     LIMIT 10";
+// Últimos atendimentos - Buscar de atendimento E pet_registros_clinicos (CORRIGIDO)
+$sql_atendimentos = "
+    (SELECT 
+        a.idAtendimento as id,
+        a.data,
+        a.hora,
+        p.nome as pet_nome,
+        s.tipo as servico,
+        f.nome as funcionario,
+        'atendimento' as origem
+    FROM atendimento a 
+    JOIN pet p ON a.idPet = p.idPet 
+    JOIN servico s ON a.idServico = s.idServico 
+    JOIN funcionario f ON a.idFuncionario = f.idFuncionario)
+    
+    UNION ALL
+    
+    (SELECT 
+        rc.idRegistro as id,
+        rc.data_registro as data,
+        COALESCE(rc.hora_registro, '12:00:00') as hora,
+        p.nome as pet_nome,
+        rc.tipo_registro as servico,
+        'Registro Clínico' as funcionario,
+        'registro_clinico' as origem
+    FROM pet_registros_clinicos rc
+    JOIN pet p ON rc.idPet = p.idPet)
+    
+    ORDER BY data DESC, hora DESC 
+    LIMIT 10";
 $atendimentos = $conn->query($sql_atendimentos);
+
+// Verificar se a query de atendimentos funcionou
+if (!$atendimentos) {
+    // Se a tabela pet_registros_clinicos não existir, usar apenas atendimentos
+    $sql_atendimentos_fallback = "SELECT 
+        a.idAtendimento as id,
+        a.data,
+        a.hora,
+        p.nome as pet_nome,
+        s.tipo as servico,
+        f.nome as funcionario,
+        'atendimento' as origem
+    FROM atendimento a 
+    JOIN pet p ON a.idPet = p.idPet 
+    JOIN servico s ON a.idServico = s.idServico 
+    JOIN funcionario f ON a.idFuncionario = f.idFuncionario
+    ORDER BY a.data DESC, a.hora DESC 
+    LIMIT 10";
+    $atendimentos = $conn->query($sql_atendimentos_fallback);
+}
 
 // Total de agendamentos para hoje
 $sql_agendamentos_hoje = "SELECT COUNT(*) as total FROM agendamento WHERE data = CURDATE()";
@@ -61,287 +105,7 @@ $conn->close();
     <link rel="stylesheet" href="../styles/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Poppins', sans-serif;
-            background: linear-gradient(135deg, #f5f7fa 0%, #e9ecef 100%);
-        }
-
-        /* Sidebar */
-        .sidebar {
-            width: 250px;
-            background-color: #292F36;
-            color: white;
-            position: fixed;
-            height: 100vh;
-            overflow-y: auto;
-            z-index: 100;
-        }
-        
-        .sidebar-header {
-            padding: 20px;
-            text-align: center;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-        }
-        
-        .sidebar-header img {
-            height: 60px;
-            width: 60px;
-            margin-bottom: 10px;
-        }
-        
-        .sidebar-header h3 {
-            font-size: 1.2rem;
-        }
-        
-        .sidebar-menu {
-            padding: 20px 0;
-        }
-        
-        .sidebar-menu a {
-            display: block;
-            padding: 12px 20px;
-            color: white;
-            text-decoration: none;
-            transition: all 0.3s ease;
-        }
-        
-        .sidebar-menu a:hover {
-            background-color: #4ECDC4;
-            padding-left: 30px;
-        }
-        
-        .sidebar-menu a i {
-            margin-right: 10px;
-            width: 20px;
-        }
-        
-        .sidebar-menu .active {
-            background-color: #4ECDC4;
-        }
-        
-        /* Top Bar */
-        .top-bar {
-            background-color: white;
-            padding: 15px 30px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            position: fixed;
-            top: 0;
-            right: 0;
-            left: 250px;
-            z-index: 99;
-        }
-        
-        .top-bar h2 {
-            font-size: 1.5rem;
-            color: #292F36;
-        }
-        
-        .user-info {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-        
-        .user-info span {
-            color: #292F36;
-            font-weight: 500;
-        }
-        
-        .btn-logout {
-            background-color: #fc0000;
-            color: white;
-            padding: 8px 15px;
-            border-radius: 5px;
-            text-decoration: none;
-            transition: all 0.3s ease;
-        }
-        
-        .btn-logout:hover {
-            background-color: #cc0000;
-        }
-        
-        /* Main Content */
-        .main-content {
-            margin-left: 250px;
-            margin-top: 70px;
-            padding: 30px;
-        }
-        
-        /* Cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        
-        .stat-card {
-            background: white;
-            padding: 25px;
-            border-radius: 20px;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            transition: all 0.3s ease;
-            border: 1px solid rgba(78, 205, 196, 0.1);
-        }
-        
-        .stat-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-        }
-        
-        .stat-info h3 {
-            font-size: 0.9rem;
-            color: #666;
-            margin-bottom: 10px;
-        }
-        
-        .stat-info .number {
-            font-size: 2rem;
-            font-weight: 700;
-            color: #292F36;
-        }
-        
-        .stat-icon {
-            font-size: 3rem;
-            color: #4ECDC4;
-        }
-        
-        /* Tables */
-        .data-section {
-            background: white;
-            border-radius: 20px;
-            padding: 25px;
-            margin-bottom: 30px;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
-            transition: all 0.3s ease;
-        }
-        
-        .data-section:hover {
-            box-shadow: 0 10px 30px rgba(0,0,0,0.12);
-        }
-        
-        .section-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
-        
-        .section-title {
-            font-size: 1.3rem;
-            color: #292F36;
-            border-left: 4px solid #4ECDC4;
-            padding-left: 15px;
-        }
-        
-        .section-title i {
-            color: #4ECDC4;
-            margin-right: 8px;
-        }
-        
-        .btn-link {
-            background: none;
-            border: none;
-            color: #4ECDC4;
-            cursor: pointer;
-            font-weight: 600;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            transition: all 0.3s ease;
-        }
-        
-        .btn-link:hover {
-            color: #3bb3aa;
-            transform: translateX(3px);
-        }
-        
-        .data-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        
-        .data-table th,
-        .data-table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e0e0e0;
-        }
-        
-        .data-table th {
-            background-color: #f8f9fa;
-            font-weight: 600;
-            color: #292F36;
-        }
-        
-        .data-table tr:hover {
-            background-color: #f8f9fa;
-        }
-        
-        .empty-message {
-            text-align: center;
-            padding: 40px;
-            color: #666;
-        }
-        
-        .badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        
-        .badge-consulta { background: #4ECDC4; color: white; }
-        .badge-vacina { background: #95E77E; color: white; }
-        .badge-cirurgia { background: #E74C3C; color: white; }
-        .badge-banho { background: #3498DB; color: white; }
-        .badge-tosa { background: #F39C12; color: white; }
-        
-        @media (max-width: 768px) {
-            .sidebar {
-                width: 100%;
-                height: auto;
-                position: relative;
-            }
-            .top-bar {
-                left: 0;
-                position: relative;
-            }
-            .main-content {
-                margin-left: 0;
-                margin-top: 0;
-            }
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .main-content {
-            animation: fadeIn 0.5s ease;
-        }
-    </style>
+    <link rel="stylesheet" href="../styles/dashboard.css">
 </head>
 <body>
     <!-- Sidebar -->
@@ -501,7 +265,11 @@ $conn->close();
                         <tr>
                             <td><?php echo date('d/m/Y', strtotime($row['data'])); ?></td>
                             <td><?php echo substr($row['hora'], 0, 5); ?></td>
-                            <td><?php echo htmlspecialchars($row['pet_nome']); ?></td>
+                            <td><?php echo htmlspecialchars($row['pet_nome']); ?> 
+                                <?php if(isset($row['origem']) && $row['origem'] == 'registro_clinico'): ?>
+                                     
+                                <?php endif; ?>
+                            </td>
                             <td><?php echo htmlspecialchars($row['servico']); ?></td>
                             <td><?php echo htmlspecialchars($row['funcionario']); ?></td>
                         </tr>

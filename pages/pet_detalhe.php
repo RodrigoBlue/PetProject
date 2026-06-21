@@ -29,7 +29,6 @@ if (!$is_new && $pet_id > 0) {
                             WHERE p.idPet = $pet_id");
     $pet = $result->fetch_assoc();
     if ($pet) {
-        // Garantir valores padrão para campos que podem não existir
         $pet['microchip'] = isset($pet['microchip']) ? $pet['microchip'] : '';
         $pet['observacoes'] = isset($pet['observacoes']) ? $pet['observacoes'] : '';
         $pet['diagnostico'] = isset($pet['diagnostico']) ? $pet['diagnostico'] : '';
@@ -69,28 +68,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $alertas = isset($_POST['alertas']) ? trim($_POST['alertas']) : '';
 
         if ($pet_id > 0) {
-            // ========== ATUALIZA PET EXISTENTE ==========
             $stmt = $conn->prepare("UPDATE pet SET nome=?, especie=?, raca=?, peso=?, sexo=?, cor=?, castrado=?, microchip=?, data_nascimento=?, observacoes=?, diagnostico=?, notas_gerais=?, alertas=? WHERE idPet=?");
             $stmt->bind_param("sssdsssssssssi", $nome, $especie, $raca, $peso, $sexo, $cor, $castrado, $microchip, $data_nascimento, $observacoes, $diagnostico, $notas_gerais, $alertas, $pet_id);
             
             if ($stmt->execute()) {
                 $message = "Informações do pet atualizadas com sucesso!";
-                // Recarregar dados do pet
                 $result = $conn->query("SELECT p.*, t.nome as tutor_nome, t.cpf, t.telefone, t.endereco FROM pet p JOIN tutor t ON p.idTutor = t.idTutor WHERE p.idPet = $pet_id");
                 $pet = $result->fetch_assoc();
-                if ($pet) {
-                    $pet['microchip'] = isset($pet['microchip']) ? $pet['microchip'] : '';
-                    $pet['observacoes'] = isset($pet['observacoes']) ? $pet['observacoes'] : '';
-                    $pet['diagnostico'] = isset($pet['diagnostico']) ? $pet['diagnostico'] : '';
-                    $pet['notas_gerais'] = isset($pet['notas_gerais']) ? $pet['notas_gerais'] : '';
-                    $pet['alertas'] = isset($pet['alertas']) ? $pet['alertas'] : '';
-                }
             } else {
                 $error = "Erro ao atualizar: " . $conn->error;
             }
             $stmt->close();
         } else {
-            // ========== CADASTRA NOVO PET (INSERT) ==========
             $tutor_id_insert = isset($_POST['tutor_id']) ? (int)$_POST['tutor_id'] : 0;
             if ($tutor_id_insert <= 0) {
                 $error = "ID do tutor inválido. Não foi possível cadastrar o pet.";
@@ -100,9 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 
                 if ($stmt->execute()) {
                     $new_id = $conn->insert_id;
-                    // Redireciona para a página de detalhes do novo pet
                     header("Location: pet_detalhe.php?id=$new_id&success=1");
-                    
                     exit();
                 } else {
                     $error = "Erro ao cadastrar pet: " . $stmt->error;
@@ -112,9 +99,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
     }
     
-    // Adicionar registro clínico
+    // Adicionar registro clínico (CORRIGIDO - sincroniza com atendimento)
     if ($_POST['action'] === 'add_registro') {
         $data_registro = isset($_POST['data_registro']) ? $_POST['data_registro'] : date('Y-m-d');
+        $hora_registro = isset($_POST['hora_registro']) ? $_POST['hora_registro'] : date('H:i:s');
         $tipo_registro = isset($_POST['tipo_registro']) ? $_POST['tipo_registro'] : 'Consulta';
         $descricao = isset($_POST['descricao']) ? trim($_POST['descricao']) : '';
         $medicamentos = isset($_POST['medicamentos']) ? trim($_POST['medicamentos']) : '';
@@ -125,6 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             idRegistro INT AUTO_INCREMENT PRIMARY KEY,
             idPet INT NOT NULL,
             data_registro DATE NOT NULL,
+            hora_registro TIME DEFAULT '12:00:00',
             tipo_registro VARCHAR(50) NOT NULL,
             descricao TEXT,
             medicamentos TEXT,
@@ -133,10 +122,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             FOREIGN KEY (idPet) REFERENCES pet(idPet) ON DELETE CASCADE
         )");
         
-        $stmt = $conn->prepare("INSERT INTO pet_registros_clinicos (idPet, data_registro, tipo_registro, descricao, medicamentos, procedimentos) VALUES (?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("isssss", $pet_id, $data_registro, $tipo_registro, $descricao, $medicamentos, $procedimentos);
+        // Inserir registro clínico
+        $stmt = $conn->prepare("INSERT INTO pet_registros_clinicos (idPet, data_registro, hora_registro, tipo_registro, descricao, medicamentos, procedimentos) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("issssss", $pet_id, $data_registro, $hora_registro, $tipo_registro, $descricao, $medicamentos, $procedimentos);
         
         if ($stmt->execute()) {
+            // ========== SINCRONIZAR COM TABELA ATENDIMENTO ==========
+            // Buscar funcionário logado
+            $funcionario_id = 1;
+            $funcionario_logado = $conn->query("SELECT idFuncionario FROM funcionario WHERE email = '" . $conn->real_escape_string($_SESSION['user_email']) . "' LIMIT 1");
+            if ($funcionario_logado && $funcionario_logado->num_rows > 0) {
+                $func = $funcionario_logado->fetch_assoc();
+                $funcionario_id = $func['idFuncionario'];
+            } else {
+                $check_func = $conn->query("SELECT idFuncionario FROM funcionario LIMIT 1");
+                if ($check_func && $check_func->num_rows > 0) {
+                    $func = $check_func->fetch_assoc();
+                    $funcionario_id = $func['idFuncionario'];
+                } else {
+                    $conn->query("INSERT INTO funcionario (nome, cargo, telefone, email) VALUES ('Sistema', 'Veterinário', '(00) 00000-0000', 'sistema@petproject.com')");
+                    $funcionario_id = $conn->insert_id;
+                }
+            }
+            
+            // Buscar ou criar serviço correspondente
+            $servico_id = null;
+            $servico_check = $conn->query("SELECT idServico FROM servico WHERE tipo = '$tipo_registro' LIMIT 1");
+            if ($servico_check && $servico_check->num_rows > 0) {
+                $serv = $servico_check->fetch_assoc();
+                $servico_id = $serv['idServico'];
+            } else {
+                $valor_padrao = ($tipo_registro == 'Consulta') ? 150.00 : (($tipo_registro == 'Vacina') ? 80.00 : (($tipo_registro == 'Exame') ? 120.00 : 100.00));
+                $conn->query("INSERT INTO servico (tipo, valor) VALUES ('$tipo_registro', $valor_padrao)");
+                $servico_id = $conn->insert_id;
+            }
+            
+            // Inserir na tabela atendimento
+            $stmt_atend = $conn->prepare("INSERT INTO atendimento (data, hora, idPet, idFuncionario, idServico) VALUES (?, ?, ?, ?, ?)");
+            $stmt_atend->bind_param("ssiii", $data_registro, $hora_registro, $pet_id, $funcionario_id, $servico_id);
+            $stmt_atend->execute();
+            $stmt_atend->close();
+            
             $message = "Registro clínico adicionado com sucesso!";
         } else {
             $error = "Erro ao adicionar registro: " . $conn->error;
@@ -152,7 +178,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $descricao_atividade = isset($_POST['descricao_atividade']) ? trim($_POST['descricao_atividade']) : '';
         $status_atividade = isset($_POST['status_atividade']) ? $_POST['status_atividade'] : 'Pendente';
         
-        // Criar tabela se não existir
         $conn->query("CREATE TABLE IF NOT EXISTS pet_atividades (
             idAtividade INT AUTO_INCREMENT PRIMARY KEY,
             idPet INT NOT NULL,
@@ -182,7 +207,7 @@ $registros_clinicos = [];
 if ($pet_id > 0) {
     $check = $conn->query("SHOW TABLES LIKE 'pet_registros_clinicos'");
     if ($check->num_rows > 0) {
-        $registros = $conn->query("SELECT * FROM pet_registros_clinicos WHERE idPet = $pet_id ORDER BY data_registro DESC");
+        $registros = $conn->query("SELECT * FROM pet_registros_clinicos WHERE idPet = $pet_id ORDER BY data_registro DESC, hora_registro DESC");
         if ($registros) {
             $registros_clinicos = $registros->fetch_all(MYSQLI_ASSOC);
         }
@@ -223,218 +248,7 @@ if ($pet_id > 0) {
     <link rel="stylesheet" href="../styles/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Poppins', sans-serif; background: #f5f5f5; }
-        
-        .sidebar {
-            width: 250px;
-            background: #292F36;
-            color: white;
-            position: fixed;
-            height: 100vh;
-            overflow-y: auto;
-            z-index: 100;
-        }
-        .sidebar-header { padding: 20px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.1); }
-        .sidebar-header img { height: 60px; width: 60px; margin-bottom: 10px; }
-        .sidebar-menu a {
-            display: block;
-            padding: 12px 20px;
-            color: white;
-            text-decoration: none;
-            transition: 0.3s;
-        }
-        .sidebar-menu a:hover, .sidebar-menu a.active { background: #4ECDC4; padding-left: 30px; }
-        .sidebar-menu i { margin-right: 10px; width: 20px; }
-        
-        .top-bar {
-            background: white;
-            padding: 15px 30px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            position: fixed;
-            top: 0;
-            right: 0;
-            left: 250px;
-            z-index: 99;
-        }
-        .btn-logout { background: #fc0000; color: white; padding: 8px 15px; border-radius: 5px; text-decoration: none; }
-        
-        .main-content {
-            margin-left: 250px;
-            margin-top: 70px;
-            padding: 30px;
-        }
-        
-        .pet-header {
-            background: white;
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .pet-info h1 { font-size: 2rem; color: #292F36; }
-        .pet-info .id { color: #666; font-size: 0.9rem; }
-        .pet-actions .btn { padding: 10px 20px; border-radius: 8px; text-decoration: none; margin-left: 10px; }
-        .btn-primary { background: #4ECDC4; color: white; border: none; cursor: pointer; }
-        .btn-secondary { background: #6c757d; color: white; }
-        .btn-sm { padding: 5px 10px; font-size: 0.8rem; margin: 0 2px; border-radius: 6px; }
-        
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-        .info-card {
-            background: white;
-            border-radius: 15px;
-            padding: 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .info-card h3 {
-            color: #4ECDC4;
-            margin-bottom: 15px;
-            border-bottom: 2px solid #4ECDC4;
-            padding-bottom: 5px;
-        }
-        .info-row {
-            display: flex;
-            margin-bottom: 10px;
-        }
-        .info-label {
-            width: 120px;
-            font-weight: 600;
-            color: #666;
-        }
-        .info-value { flex: 1; color: #292F36; }
-        
-        .tabs {
-            display: flex;
-            background: white;
-            border-radius: 15px 15px 0 0;
-            overflow-x: auto;
-            border-bottom: 2px solid #e0e0e0;
-            flex-wrap: wrap;
-        }
-        .tab-btn {
-            padding: 15px 25px;
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: #666;
-            transition: 0.3s;
-        }
-        .tab-btn:hover { background: #f5f5f5; }
-        .tab-btn.active {
-            color: #4ECDC4;
-            border-bottom: 3px solid #4ECDC4;
-        }
-        .tab-content {
-            background: white;
-            border-radius: 0 0 15px 15px;
-            padding: 25px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            display: none;
-        }
-        .tab-content.active { display: block; }
-        
-        .form-group {
-            margin-bottom: 15px;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: 600;
-            color: #292F36;
-        }
-        .form-group input, 
-        .form-group select, 
-        .form-group textarea {
-            width: 100%;
-            padding: 10px;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
-            font-size: 0.9rem;
-            transition: all 0.3s ease;
-        }
-        .form-group input:focus, 
-        .form-group select:focus, 
-        .form-group textarea:focus {
-            outline: none;
-            border-color: #4ECDC4;
-        }
-        textarea {
-            resize: vertical;
-            min-height: 80px;
-        }
-        
-        .data-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .data-table th, .data-table td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #e0e0e0;
-        }
-        .data-table th { background: #f8f9fa; font-weight: 600; }
-        .data-table tr:hover { background: #f8f9fa; }
-        
-        .empty-message { text-align: center; padding: 40px; color: #666; }
-        
-        .alert { padding: 12px; border-radius: 10px; margin-bottom: 20px; }
-        .alert-success { background: #d4edda; color: #155724; border-left: 4px solid #28a745; }
-        .alert-error { background: #f8d7da; color: #721c24; border-left: 4px solid #dc3545; }
-        
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        .modal-content {
-            background: white;
-            padding: 30px;
-            border-radius: 20px;
-            min-width: 500px;
-            max-width: 600px;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-        
-        .badge {
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 20px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-        .badge-pendente { background: #ffc107; color: #000; }
-        .badge-concluido { background: #28a745; color: #fff; }
-        .badge-cancelado { background: #dc3545; color: #fff; }
-        
-        @media (max-width: 768px) {
-            .sidebar { width: 100%; height: auto; position: relative; }
-            .top-bar { left: 0; position: relative; }
-            .main-content { margin-left: 0; margin-top: 0; }
-            .modal-content { min-width: 90%; margin: 20px; }
-        }
-    </style>
+    <link rel="stylesheet" href="../styles/pet_detalhe.css">
 </head>
 <body>
     <div class="sidebar">
@@ -509,7 +323,6 @@ if ($pet_id > 0) {
                     <label>Data de Nascimento</label>
                     <input type="date" name="data_nascimento">
                 </div>
-                <!-- Campos adicionais para consistência com a edição -->
                 <div class="form-group">
                     <label>Castrado</label>
                     <select name="castrado">
@@ -579,19 +392,20 @@ if ($pet_id > 0) {
             </button>
             <table class="data-table" style="margin-top: 15px;">
                 <thead>
-                    <tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Medicamentos</th><th>Procedimentos</th></tr>
+                    <tr><th>Data</th><th>Hora</th><th>Tipo</th><th>Descrição</th><th>Medicamentos</th><th>Procedimentos</th></tr>
                 </thead>
                 <tbody>
                     <?php if(empty($registros_clinicos)): ?>
-                        <tr><td colspan="5" class="empty-message">Nenhum registro clínico encontrado</td></tr>
+                        <tr><td colspan="6" class="empty-message">Nenhum registro clínico encontrado</td></tr>
                     <?php else: ?>
                         <?php foreach($registros_clinicos as $rc): ?>
                         <tr>
                             <td><?php echo date('d/m/Y', strtotime($rc['data_registro'])); ?></td>
+                            <td><?php echo isset($rc['hora_registro']) ? substr($rc['hora_registro'], 0, 5) : '12:00'; ?></td>
                             <td><?php echo $rc['tipo_registro']; ?></td>
-                            <td><?php echo nl2br(htmlspecialchars($rc['descricao'])); ?></td>
-                            <td><?php echo nl2br(htmlspecialchars($rc['medicamentos'])); ?></td>
-                            <td><?php echo nl2br(htmlspecialchars($rc['procedimentos'])); ?></td>
+                            <td><?php echo nl2br(htmlspecialchars(substr($rc['descricao'], 0, 100))); ?><?php echo strlen($rc['descricao']) > 100 ? '...' : ''; ?></td>
+                            <td><?php echo nl2br(htmlspecialchars(substr($rc['medicamentos'], 0, 100))); ?><?php echo strlen($rc['medicamentos']) > 100 ? '...' : ''; ?></td>
+                            <td><?php echo nl2br(htmlspecialchars(substr($rc['procedimentos'], 0, 100))); ?><?php echo strlen($rc['procedimentos']) > 100 ? '...' : ''; ?></td>
                         </tr>
                         <?php endforeach; ?>
                     <?php endif; ?>
@@ -755,42 +569,46 @@ if ($pet_id > 0) {
     </div>
     
     <div id="registroModal" class="modal">
-        <div class="modal-content">
-            <h3><i class="fas fa-notes-medical"></i> Adicionar Registro Clínico</h3>
-            <form method="POST">
-                <input type="hidden" name="action" value="add_registro">
-                <div class="form-group">
-                    <label>Data</label>
-                    <input type="date" name="data_registro" required>
-                </div>
-                <div class="form-group">
-                    <label>Tipo de Registro</label>
-                    <select name="tipo_registro" required>
-                        <option value="Consulta">🏥 Consulta</option>
-                        <option value="Vacina">💉 Vacina</option>
-                        <option value="Exame">🔬 Exame</option>
-                        <option value="Cirurgia">🔪 Cirurgia</option>
-                        <option value="Retorno">📋 Retorno</option>
-                        <option value="Emergência">🚨 Emergência</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Descrição</label>
-                    <textarea name="descricao" rows="3" required placeholder="Descreva o atendimento, sintomas, etc..."></textarea>
-                </div>
-                <div class="form-group">
-                    <label>Medicamentos Prescritos</label>
-                    <textarea name="medicamentos" rows="2" placeholder="Medicamentos, dosagens, período..."></textarea>
-                </div>
-                <div class="form-group">
-                    <label>Procedimentos Realizados</label>
-                    <textarea name="procedimentos" rows="2" placeholder="Procedimentos, exames, etc..."></textarea>
-                </div>
-                <button type="submit" class="btn btn-primary">Salvar</button>
-                <button type="button" class="btn btn-secondary" onclick="closeModal('registroModal')">Cancelar</button>
-            </form>
-        </div>
+    <div class="modal-content">
+        <h3><i class="fas fa-notes-medical"></i> Adicionar Registro Clínico</h3>
+        <form method="POST">
+            <input type="hidden" name="action" value="add_registro">
+            <div class="form-group">
+                <label><i class="fas fa-calendar"></i> Data</label>
+                <input type="date" name="data_registro" required value="<?php echo date('Y-m-d'); ?>">
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-clock"></i> Hora</label>
+                <input type="time" name="hora_registro" required value="<?php echo date('H:i'); ?>">
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-stethoscope"></i> Tipo de Registro</label>
+                <select name="tipo_registro" required>
+                    <option value="Consulta">🏥 Consulta</option>
+                    <option value="Vacina">💉 Vacina</option>
+                    <option value="Exame">🔬 Exame</option>
+                    <option value="Cirurgia">🔪 Cirurgia</option>
+                    <option value="Retorno">📋 Retorno</option>
+                    <option value="Emergência">🚨 Emergência</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-notes-medical"></i> Descrição</label>
+                <textarea name="descricao" rows="3" required placeholder="Descreva o atendimento, sintomas, etc..."></textarea>
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-pills"></i> Medicamentos Prescritos</label>
+                <textarea name="medicamentos" rows="2" placeholder="Medicamentos, dosagens, período..."></textarea>
+            </div>
+            <div class="form-group">
+                <label><i class="fas fa-syringe"></i> Procedimentos Realizados</label>
+                <textarea name="procedimentos" rows="2" placeholder="Procedimentos, exames, etc..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Salvar</button>
+            <button type="button" class="btn btn-secondary" onclick="closeModal('registroModal')">Cancelar</button>
+        </form>
     </div>
+</div>
     
     <div id="atividadeModal" class="modal">
         <div class="modal-content">

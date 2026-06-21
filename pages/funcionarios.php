@@ -45,7 +45,7 @@ $funcionarios = $conn->query("SELECT u.id, u.email, u.nome, u.role, f.cargo, f.t
         <div class="card">
             <h3>Total de funcionários: <?php echo $funcionarios->num_rows; ?></h3>
             <table>
-                <thead><tr><th>ID</th><th>Nome</th><th>Email</th><th>Cargo</th><th>Role</th><th>Permissões</th><th>Ações</th></tr></thead>
+                <thead><tr><th>ID</th><th>Nome</th><th>Email</th><th>Cargo</th><th>Permissões</th></tr></thead>
                 <tbody>
                 <?php 
                 $funcionarios->data_seek(0);
@@ -56,8 +56,7 @@ $funcionarios = $conn->query("SELECT u.id, u.email, u.nome, u.role, f.cargo, f.t
                 <tr>
                     <td><?php echo $f['id']; ?></td>
                     <td><?php echo $f['nome']; ?></td>
-                    <td><?php echo $f['email']; ?></td>
-                    <td><?php echo $f['cargo']; ?></td>
+                    <td><?php echo $f['email']; ?></td>                                      
                     <td><span class="badge-<?php echo $f['role']=='admin'?'admin':'func'; ?>"><?php echo $f['role']; ?></span></td>
                     <td>
                         <form method="POST" class="perm-form">
